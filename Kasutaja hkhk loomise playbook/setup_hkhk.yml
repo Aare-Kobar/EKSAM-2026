@@ -1,0 +1,63 @@
+- name: Seadista kasutaja hkhk ja turva SSH
+  hosts: all
+  become: yes
+
+  vars:
+    hkhk_pubkey: "{{ lookup('file', '~/.ssh/hkhk_key.pub') }}"
+
+  tasks:
+    - name: Loo kasutaja hkhk
+      ansible.builtin.user:
+        name: hkhk
+        state: present
+        shell: /bin/bash
+        create_home: yes
+
+    - name: Lisa hkhk sudo gruppi (Debian/Ubuntu)
+      ansible.builtin.user:
+        name: hkhk
+        groups: sudo
+        append: yes
+      when: ansible_os_family == 'Debian'
+
+    - name: Lisa hkhk wheel gruppi (AlmaLinux/RHEL)
+      ansible.builtin.user:
+        name: hkhk
+        groups: wheel
+        append: yes
+      when: ansible_os_family == 'RedHat'
+
+    - name: Luba hkhk kasutada sudo ilma paroolita
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/hkhk
+        content: 'hkhk ALL=(ALL) NOPASSWD: ALL'
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
+    - name: Kopeeri hkhk SSH avalik võti
+      ansible.posix.authorized_key:
+        user: hkhk
+        state: present
+        key: "{{ hkhk_pubkey }}"
+
+    - name: Keela SSH parooliga sisselogimine
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        state: present
+      notify: Restart SSH
+
+    - name: Keela root SSH-ligipääs
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+      notify: Restart SSH
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.service:
+        name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+        state: restarted
